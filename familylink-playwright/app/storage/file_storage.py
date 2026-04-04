@@ -97,11 +97,57 @@ class SharedStorage:
             _LOGGER.error(f"Failed to load cookies: {e}")
             raise
 
+    async def save_browser_state(self, state: Dict[str, Any]) -> None:
+        """Save Playwright browser storage state (cookies + localStorage + sessionStorage)."""
+        try:
+            state_path = self.share_dir / "browser_state.enc"
+            data = {
+                "state": state,
+                "timestamp": datetime.utcnow().isoformat(),
+                "version": "1.0"
+            }
+            fernet = Fernet(self._encryption_key)
+            encrypted = fernet.encrypt(json.dumps(data).encode())
+
+            temp_file = state_path.with_suffix('.tmp')
+            temp_file.write_bytes(encrypted)
+            temp_file.rename(state_path)
+            os.chmod(state_path, 0o600)
+
+            _LOGGER.info("Saved browser state to shared storage")
+        except Exception as e:
+            _LOGGER.error(f"Failed to save browser state: {e}")
+            raise
+
+    async def load_browser_state(self) -> Dict[str, Any] | None:
+        """Load Playwright browser storage state."""
+        state_path = self.share_dir / "browser_state.enc"
+        if not state_path.exists():
+            return None
+
+        try:
+            encrypted = state_path.read_bytes()
+            fernet = Fernet(self._encryption_key)
+            decrypted = fernet.decrypt(encrypted)
+            data = json.loads(decrypted.decode())
+            _LOGGER.info("Loaded browser state from shared storage")
+            return data.get("state")
+        except (InvalidToken, Exception) as e:
+            _LOGGER.warning(f"Failed to load browser state: {e}")
+            return None
+
+    async def browser_state_exists(self) -> bool:
+        """Check if browser state file exists."""
+        return (self.share_dir / "browser_state.enc").exists()
+
     async def clear_cookies(self) -> None:
-        """Remove stored cookies."""
+        """Remove stored cookies and browser state."""
         if self.storage_path.exists():
             self.storage_path.unlink()
-            _LOGGER.info("Cleared stored cookies")
+        state_path = self.share_dir / "browser_state.enc"
+        if state_path.exists():
+            state_path.unlink()
+        _LOGGER.info("Cleared stored cookies and browser state")
 
     async def check_exists(self) -> bool:
         """Check if cookies exist."""
