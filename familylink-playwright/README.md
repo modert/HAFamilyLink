@@ -15,7 +15,8 @@ This add-on runs a web server with Playwright browser automation to handle Googl
 - 🔒 **Encrypted Cookie Storage**: All cookies are encrypted before storage
 - 🌐 **User-Friendly Web Interface**: Simple web UI for authentication (port 8099)
 - 🔄 **Automatic Cookie Management**: Stores cookies in shared storage for the integration
-- 📊 **Status Monitoring**: Real-time authentication status updates
+- � **Session Keepalive**: Automatically refreshes Google session every 4 hours to prevent expiration — no manual re-authentication needed (see [SESSION_KEEPALIVE.md](SESSION_KEEPALIVE.md))
+- �📊 **Status Monitoring**: Real-time authentication status updates
 
 ## Installation
 
@@ -87,7 +88,7 @@ This add-on runs a web server with Playwright browser automation to handle Googl
 
 ### Re-authentication
 
-If your session expires or you need to re-authenticate:
+With session keepalive enabled, re-authentication is handled automatically. If you ever need to manually re-authenticate (e.g., after a Google password change):
 
 1. Open the add-on web interface
 2. Click "Démarrer l'authentification" again
@@ -108,7 +109,7 @@ session_duration: 86400
 |--------|---------|-------------|
 | `log_level` | `info` | Logging level (trace, debug, info, warning, error) |
 | `auth_timeout` | `300` | Maximum time (seconds) to wait for user to complete login |
-| `session_duration` | `86400` | How long (seconds) cookies remain valid (24 hours default) |
+| `session_duration` | `86400` | Session validity window in seconds. With keepalive enabled, cookies are refreshed automatically well before expiry |
 
 ## Architecture
 
@@ -119,7 +120,7 @@ session_duration: 86400
 │  ┌────────────────────────────────────────┐ │
 │  │  FastAPI Web Server (Port 8099)       │ │
 │  │  - Authentication UI                   │ │
-│  │  - Status endpoints                    │ │
+│  │  - Status & keepalive endpoints        │ │
 │  └────────────────┬───────────────────────┘ │
 │                   │                          │
 │  ┌────────────────▼───────────────────────┐ │
@@ -127,6 +128,12 @@ session_duration: 86400
 │  │  - Launches Chromium                   │ │
 │  │  - Monitors authentication             │ │
 │  │  - Extracts cookies                    │ │
+│  └────────────────┬───────────────────────┘ │
+│                   │                          │
+│  ┌────────────────▼───────────────────────┐ │
+│  │  Session Keepalive                    │ │
+│  │  - Headless refresh every 4 hours      │ │
+│  │  - Saves cookies + browser state       │ │
 │  └────────────────┬───────────────────────┘ │
 │                   │                          │
 └───────────────────┼──────────────────────────┘
@@ -182,6 +189,19 @@ The add-on uses Playwright with Chromium running on a virtual display (Xvfb):
    - Browser resources are cleaned up
 
 **Why noVNC is needed**: The browser runs headless inside the Docker container. noVNC allows you to see and interact with it remotely through your web browser.
+
+### Session Keepalive
+
+After initial authentication, the add-on automatically keeps the Google session alive by performing a lightweight headless browser refresh every 4 hours:
+
+- Launches headless Chromium, loads saved browser state + cookies, navigates to `families.google.com`
+- Re-extracts and saves refreshed cookies and browser state
+- Total active time: ~15 seconds per refresh (~90 seconds/day, 0.1% duty cycle)
+- Zero memory usage between refreshes — browser is fully closed after each cycle
+- Automatic retry with exponential backoff on failure (1h → 2h → 4h)
+- Monitoring via `/api/keepalive/status` and `/api/keepalive/perf` endpoints
+
+For full design details, see [SESSION_KEEPALIVE.md](SESSION_KEEPALIVE.md).
 
 ## Troubleshooting
 
