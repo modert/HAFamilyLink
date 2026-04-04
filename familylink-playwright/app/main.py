@@ -1,4 +1,5 @@
 """Main FastAPI application for Family Link Auth."""
+import asyncio
 import logging
 import os
 import sys
@@ -430,11 +431,14 @@ async def index():
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
-    return {
+    result = {
         "status": "healthy",
         "service": "familylink-auth",
-        "version": "1.0.0"
+        "version": "1.0.0",
     }
+    if browser_manager and browser_manager._keepalive:
+        result["keepalive"] = browser_manager._keepalive.status
+    return result
 
 
 @app.post("/api/auth/start")
@@ -497,6 +501,31 @@ async def delete_cookies(_: None = Depends(_verify_api_key)):
     except Exception as e:
         _LOGGER.error(f"Failed to delete cookies: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete cookies")
+
+
+@app.get("/api/keepalive/status")
+async def keepalive_status():
+    """Get session keepalive status."""
+    if browser_manager is None or browser_manager._keepalive is None:
+        return {"status": "not_initialized"}
+    return browser_manager._keepalive.status
+
+
+@app.get("/api/keepalive/perf")
+async def keepalive_perf():
+    """Get session keepalive performance metrics."""
+    if browser_manager is None or browser_manager._keepalive is None:
+        return {"status": "not_initialized"}
+    return browser_manager._keepalive.perf_summary
+
+
+@app.post("/api/keepalive/refresh")
+async def keepalive_trigger_refresh(_: None = Depends(_verify_api_key)):
+    """Manually trigger a session refresh cycle."""
+    if browser_manager is None or browser_manager._keepalive is None:
+        raise HTTPException(status_code=503, detail="Keepalive not initialized")
+    asyncio.create_task(browser_manager._keepalive._do_refresh())
+    return {"status": "refresh_triggered"}
 
 
 if __name__ == "__main__":
