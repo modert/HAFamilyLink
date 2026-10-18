@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Allow apps with unlimited time during downtime** - New `switch.<child>_unlimited_apps_during_downtime` and `familylink.set_downtime_unlimited_apps` action (`allow: true` / `false`) for the per-child Family Link setting of that name: on, the apps set to unlimited time stay usable during downtime; off, they are blocked during downtime too, on every device of the child. The state is read from the `[flag, setting]` pairs that end the `timeLimit` response (setting 1, flag 1 = allowed) and written with `timeLimit:update`, `[null, childId, [null, null, null, null, [null, null, [[flag, 1]]]], null, [1]]`. The switch is unknown when Google does not report the setting.
+
 ---
 
 ## [2.2.6] - 2026-10-08
