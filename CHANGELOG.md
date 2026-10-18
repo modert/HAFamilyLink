@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **`set_bedtime` accepts an `entity_id` like the other child services** - It was the only child-targeted service whose schema took `child_id` alone, so a call naming an entity was rejected before it ran, and since the service authorization (#177) lets a non-administrator through only with an entity target, a non-admin dashboard could not call `set_bedtime` at all. The child is now read from the entity exactly as `enable_bedtime` and `set_school_time` do (its `child_id` attribute, or the Family Link device it belongs to); a `child_id` given by hand still takes precedence, and calls with `child_id` or no target behave as before.
+
 ---
 
 ## [2.2.6] - 2026-10-08
