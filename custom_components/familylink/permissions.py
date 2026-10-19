@@ -13,9 +13,10 @@ The rule mirrors what Home Assistant already does for the entities:
 
 - a call without a user (automation, script started by the system) is trusted;
 - an administrator can do anything;
-- a call that names an ``entity_id`` and nothing else is allowed when the user
-  may control that entity, exactly as if they had toggled it from a dashboard,
-  so an entity permission policy applies to the services too;
+- a call that names an ``entity_id`` and nothing else is allowed when that entity
+  is a Family Link entity and the user may control it, exactly as if they had
+  toggled it from a dashboard, so an entity permission policy applies to the
+  services too;
 - a call that relies on raw identifiers, or that has no target at all, needs an
   administrator, because there is no entity to evaluate a policy against.
 
@@ -34,6 +35,9 @@ import voluptuous as vol
 from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import Unauthorized, UnknownUser
+from homeassistant.helpers import entity_registry as er
+
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,6 +62,18 @@ async def async_verify_service_call(hass: HomeAssistant, call: ServiceCall) -> N
 	raw_fields = [field for field in RAW_TARGET_FIELDS if call.data.get(field)]
 
 	if entity_id and not raw_fields:
+		# The entity must be one of ours: a light the user controls resolves no
+		# child, and the handlers then fall back to the first child, which would
+		# turn any controllable entity into a key for that child's settings
+		entry = er.async_get(hass).async_get(entity_id)
+		if entry is None or entry.platform != DOMAIN:
+			_LOGGER.warning(
+				"Service %s.%s refused: %s is not a Family Link entity",
+				call.domain, call.service, entity_id,
+			)
+			raise Unauthorized(
+				context=call.context, entity_id=entity_id, permission=POLICY_CONTROL
+			)
 		if user.permissions.check_entity(entity_id, POLICY_CONTROL):
 			return
 		_LOGGER.warning(
