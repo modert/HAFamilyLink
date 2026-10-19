@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [2.2.7] - 2026-10-19
+
+Four fixes: an empty members answer keeps the children, a child's daily limit skips its Google TV (contributed by @theSiegs, #192), the service guard only takes Family Link entities, and a weekly quota needs no device.
 
 ### Fixed
 - **A non-administrator can no longer reach a child's settings through an entity of another integration** - The service guard added in 2.1.0 (#169, #177) let a non-administrator call a service with any `entity_id` they may control. An entity that is not a Family Link one (a light, say) names no child, and `enable_bedtime`, `disable_bedtime`, the school-time and daily-limit services then fell back to the first supervised child, so a user allowed to toggle one light could lift that child's bedtime. The guard now requires the entity to belong to this integration; administrators and automations are not affected.
