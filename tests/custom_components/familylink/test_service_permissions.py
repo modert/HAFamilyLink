@@ -172,12 +172,15 @@ async def test_non_admin_cannot_use_an_entity_of_another_integration(hass, servi
 
 
 async def test_admin_may_still_use_any_entity(hass, services) -> None:
-    """The platform check is for non-administrators only."""
+    """The platform check is for non-administrators only.
+
+    The guard lets the administrator through; it is then the handler that
+    rejects the light, because it carries no device_id.
+    """
     user = _user(hass, is_admin=True)
 
-    await _call(hass, "add_time_bonus", {"entity_id": LIGHT, "bonus_minutes": 10}, user)
-
-    assert services.client.async_add_time_bonus.await_count == 1
+    with pytest.raises(ValueError, match="device_id"):
+        await _call(hass, "add_time_bonus", {"entity_id": LIGHT, "bonus_minutes": 10}, user)
 
 
 async def test_non_admin_cannot_pair_entity_with_another_raw_identifier(hass, services) -> None:
