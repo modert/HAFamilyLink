@@ -14,11 +14,13 @@ from pytest_homeassistant_custom_component.common import MockUser
 
 from homeassistant.core import Context
 from homeassistant.exceptions import Unauthorized, UnknownUser
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.familylink import async_setup_services
 from custom_components.familylink.const import DOMAIN
 
 PHONE = "switch.kid_phone"
+LIGHT = "light.kitchen"
 PHONE_DEVICE_ID = "device-phone"
 TABLET_DEVICE_ID = "device-tablet"
 CHILD_ID = "child-1"
@@ -51,9 +53,14 @@ ALL_SERVICES = [
 @pytest.fixture
 async def services(hass, coordinator):
     """Register the services against a mocked coordinator and one device entity."""
+    # The phone switch is a Family Link entity in the registry; the light is not
+    registry = er.async_get(hass)
+    registry.async_get_or_create("switch", DOMAIN, "kid_phone", suggested_object_id="kid_phone")
+    registry.async_get_or_create("light", "demo", "kitchen", suggested_object_id="kitchen")
     hass.states.async_set(
         PHONE, "on", {"device_id": PHONE_DEVICE_ID, "child_id": CHILD_ID}
     )
+    hass.states.async_set(LIGHT, "on", {})
     await async_setup_services(hass, coordinator)
     return coordinator
 
@@ -148,6 +155,32 @@ async def test_non_admin_denied_on_the_entity_is_refused(hass, services) -> None
         await _call(hass, "add_time_bonus", {"entity_id": PHONE, "bonus_minutes": 10}, user)
 
     assert services.client.mock_calls == []
+
+
+async def test_non_admin_cannot_use_an_entity_of_another_integration(hass, services) -> None:
+    """A light the user controls is not a key to the first child's settings.
+
+    Such an entity carries no child_id, so the handlers would fall back to the
+    first supervised child: the guard rejects it before the handler runs.
+    """
+    user = _user(hass, policy={"entities": {"entity_ids": {LIGHT: True}}})
+
+    with pytest.raises(Unauthorized):
+        await _call(hass, "add_time_bonus", {"entity_id": LIGHT, "bonus_minutes": 10}, user)
+
+    assert services.client.mock_calls == []
+
+
+async def test_admin_may_still_use_any_entity(hass, services) -> None:
+    """The platform check is for non-administrators only.
+
+    The guard lets the administrator through; it is then the handler that
+    rejects the light, because it carries no device_id.
+    """
+    user = _user(hass, is_admin=True)
+
+    with pytest.raises(ValueError, match="device_id"):
+        await _call(hass, "add_time_bonus", {"entity_id": LIGHT, "bonus_minutes": 10}, user)
 
 
 async def test_non_admin_cannot_pair_entity_with_another_raw_identifier(hass, services) -> None:
