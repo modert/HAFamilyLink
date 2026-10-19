@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **An empty family members answer no longer blanks the children** - The members read can succeed and still list no supervised child (no `members` field, an empty list, members without their supervision info). The refresh carried on with zero children: every child's data was replaced with nothing, so switches fell back to their defaults (bedtime reported off, a device under bedtime or its daily limit reported usable) and the sensors went unknown or unavailable, and the cache was overwritten with that empty result, leaving a later failed read nothing to fall back on. When the last good refresh had children, such an answer now fails the refresh like a failed read (#184) and the last known data is kept. At startup, with nothing cached, an account without supervised children sets up as before.
+
 ---
 
 ## [2.2.6] - 2026-10-08

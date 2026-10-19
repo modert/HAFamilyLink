@@ -229,6 +229,13 @@ class FamilyLinkDataUpdateCoordinator(DataUpdateCoordinator):
 			raise FamilyLinkException(f"Failed to fetch family members: {err}") from err
 
 		if not supervised_children:
+			if self._last_known_data and self._last_known_data.get("children_data"):
+				# The read succeeded but lists no supervised child where the last
+				# good refresh had some: a transient answer, not a family that lost
+				# its children. Fail the refresh like a failed read, so
+				# _async_update_data keeps _last_known_data instead of blanking
+				# every child's entities and overwriting the cache with nothing.
+				raise FamilyLinkException("Family members read returned no supervised children")
 			_LOGGER.warning("No supervised children found — entities will not be created. Check your Family Link account configuration.")
 
 		# Fetch data for each supervised child
