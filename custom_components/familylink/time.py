@@ -168,7 +168,11 @@ class FamilyLinkSchoolTimeTime(FamilyLinkBedtimeTime):
 	"""Start or end of the weekly school time of one weekday.
 
 	Unavailable for weekdays without a school time window in Family Link
-	(Google does not create a slot from the weekly update call).
+	(Google does not create a slot from the weekly update call). A school day
+	with a break is stored by Google as several slots on the same day (issue
+	#190): the start is the earliest slot's, the end the latest slot's, and the
+	slots are listed in the ``windows`` attribute. A day whose slots are all
+	disabled reads unknown.
 	"""
 
 	def __init__(
@@ -186,23 +190,77 @@ class FamilyLinkSchoolTimeTime(FamilyLinkBedtimeTime):
 		self._attr_unique_id = f"{DOMAIN}_{child_id}_schooltime_{day}_{bound}"
 		self._attr_icon = "mdi:school" if bound == BOUND_START else "mdi:school-outline"
 
-	def _slot(self) -> dict[str, Any] | None:
+	def _day_slots(self) -> list[dict[str, Any]]:
+		"""The enabled school time slots of this weekday, earliest first."""
+		rows: list[dict[str, Any]] = []
 		for child_data in (self.coordinator.data or {}).get("children_data", []):
 			if child_data.get("child_id") == self._child_id:
-				for slot in child_data.get("school_time_schedule") or []:
-					if slot.get("day") == self._day:
-						return slot
-		return None
+				rows = [
+					slot for slot in child_data.get("school_time_schedule") or []
+					if slot.get("day") == self._day and slot.get("enabled")
+				]
+		return sorted(rows, key=lambda slot: tuple(slot.get("start") or [0, 0]))
+
+	def _has_rows(self) -> bool:
+		for child_data in (self.coordinator.data or {}).get("children_data", []):
+			if child_data.get("child_id") == self._child_id:
+				return any(
+					slot.get("day") == self._day for slot in child_data.get("school_time_schedule") or []
+				)
+		return False
+
+	def _slot(self) -> dict[str, Any] | None:
+		"""The school day as one window: earliest start, latest end, slots listed.
+
+		None when Family Link has no slot at all for the day (entity unavailable);
+		a window without bounds when the day's slots are all disabled (unknown).
+		"""
+		slots = self._day_slots()
+		if not slots:
+			return {"enabled": False, "start": None, "end": None, "windows": []} if self._has_rows() else None
+		last = max(slots, key=lambda slot: tuple(slot.get("end") or [0, 0]))
+		return {
+			"enabled": True,
+			"start": slots[0].get("start"),
+			"end": last.get("end"),
+			"windows": [
+				f"{self._as_time(slot.get('start')):%H:%M}-{self._as_time(slot.get('end')):%H:%M}"
+				for slot in slots
+				if self._as_time(slot.get("start")) and self._as_time(slot.get("end"))
+			],
+			"first_slot": slots[0],
+			"last_slot": last,
+		}
+
+	@property
+	def extra_state_attributes(self) -> dict[str, Any]:
+		"""The whole school day, slots included, for cards."""
+		slot = self._slot() or {}
+		return {
+			"child_id": self._child_id,
+			"child_name": self._child_name,
+			"day": self._day,
+			"day_name": DAY_NAMES[self._day],
+			"enabled": slot.get("enabled"),
+			"start": slot.get("start"),
+			"end": slot.get("end"),
+			"windows": slot.get("windows", []),
+		}
 
 	async def async_set_value(self, value: time) -> None:
-		"""Rewrite the weekly school time slot of this weekday with the new bound."""
+		"""Rewrite the weekly school time slot of this weekday with the new bound.
+
+		With a break, the start belongs to the first slot and the end to the
+		last one; the slot in between is left alone, so the break survives.
+		"""
 		client = self.coordinator.client
 		if client is None:
 			_LOGGER.error("Cannot set the school time: client not connected")
 			return
-		slot = self._slot() or {}
-		start = self._as_time(slot.get("start"))
-		end = self._as_time(slot.get("end"))
+		day = self._slot() or {}
+		target = day.get("first_slot" if self._bound == BOUND_START else "last_slot") or {}
+		start = self._as_time(target.get("start"))
+		end = self._as_time(target.get("end"))
 		if self._bound == BOUND_START:
 			start = value
 		else:
@@ -213,7 +271,8 @@ class FamilyLinkSchoolTimeTime(FamilyLinkBedtimeTime):
 		start_text, end_text = start.strftime("%H:%M"), end.strftime("%H:%M")
 		_LOGGER.info(f"Setting the {DAY_NAMES[self._day]} school time of {self._child_name} to {start_text}-{end_text}")
 		success = await client.async_set_school_time(
-			start_text, end_text, day=self._day, account_id=self._child_id, scope="weekly"
+			start_text, end_text, day=self._day, account_id=self._child_id, scope="weekly",
+			slot_id=target.get("slot_id"),
 		)
 		if not success:
 			_LOGGER.error(f"Failed to set the {DAY_NAMES[self._day]} school time of {self._child_name}")

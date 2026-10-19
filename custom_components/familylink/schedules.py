@@ -206,6 +206,9 @@ def parse_window_schedule_items(
 			"start": start,
 			"end": end,
 			"state_flag": state_flag,
+			# The row's own id: a school day with a break has several rows on
+			# the same day, and a write must name the one it changes (#190)
+			"slot_id": code,
 		})
 
 	return sorted(schedules, key=lambda slot: slot["day"])

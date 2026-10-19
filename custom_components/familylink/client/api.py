@@ -3354,14 +3354,20 @@ class FamilyLinkClient:
 		return _is_hm(row[3]) and _is_hm(row[4])
 
 	@classmethod
-	def _find_weekly_school_time_row(cls, data: Any, day: int) -> list | None:
-		"""Find the live weekly school time row for `day` (None if the day has none)."""
+	def _find_weekly_school_time_row(cls, data: Any, day: int, slot_id: str | None = None) -> list | None:
+		"""Find the live weekly school time row for `day` (None if the day has none).
+
+		A day with a break has several rows (#190): `slot_id` names the one
+		wanted; without it the first row met is returned.
+		"""
 		bedtime_rule_id = cls._find_revision_rule_id(data, 1)
 		schooltime_rule_id = cls._find_revision_rule_id(data, 2)
 
 		def _walk(value: Any) -> list | None:
 			if isinstance(value, list):
-				if cls._is_school_time_slot_row(value, day, bedtime_rule_id, schooltime_rule_id):
+				if cls._is_school_time_slot_row(value, day, bedtime_rule_id, schooltime_rule_id) and (
+					slot_id is None or value[0] == slot_id
+				):
 					return value
 				for item in value:
 					found = _walk(item)
@@ -3383,6 +3389,7 @@ class FamilyLinkClient:
 		day: int | None = None,
 		account_id: str | None = None,
 		scope: str = "weekly",
+		slot_id: str | None = None,
 	) -> bool:
 		"""Set the school time window (start and finish) for a given day.
 
@@ -3442,7 +3449,7 @@ class FamilyLinkClient:
 			data = await self._async_get_weekly_schedule_data(account_id, session, cookie_header)
 
 			if scope == "weekly":
-				row = self._find_weekly_school_time_row(data, day) if data is not None else None
+				row = self._find_weekly_school_time_row(data, day, slot_id) if data is not None else None
 				if row is None:
 					_LOGGER.error(
 						f"No weekly school time slot found for day {day}. Create a school time "

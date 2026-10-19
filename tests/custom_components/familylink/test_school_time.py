@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from custom_components.familylink import async_setup_services
 from custom_components.familylink.client.api import FamilyLinkClient
 from custom_components.familylink.const import DOMAIN
+from custom_components.familylink.time import FamilyLinkSchoolTimeTime
 
 ACCOUNT_ID = "115977971790729308369"
 BEDTIME_RULE = "87ac8abb-ed2a-49aa-830f-15523956338b"
@@ -61,6 +63,30 @@ def test_day_without_school_time_slot_returns_none() -> None:
     assert FamilyLinkClient._find_weekly_school_time_row(_time_limit_data(), 3) is None
 
 
+# A school day with a break: Google stores two slots on the same day (#190)
+SCHOOL_TUESDAY_MORNING = "CAMQAiIkYmI1YTI4N2YtMTM3NC00N2FhLTgzZjQtZTA5NDg4NjhhYmMw"
+SCHOOL_TUESDAY_AFTERNOON = "CAMQAiIkMWUyYWVmZWYtZWJkZi00ODExLTk2ODctMWZhNmUwNjUwZTYy"
+
+
+def _time_limit_data_with_break() -> list:
+    data = _time_limit_data()
+    # The afternoon slot comes first, as Google may list it
+    data[0][1].insert(1, [SCHOOL_TUESDAY_AFTERNOON, 2, 2, [14, 0], [15, 0], "1", "2", SCHOOL_RULE])
+    data[0][1].append([SCHOOL_TUESDAY_MORNING, 2, 2, [8, 0], [13, 0], "1", "2", SCHOOL_RULE])
+    return data
+
+
+def test_a_slot_id_picks_the_row_of_a_day_with_a_break() -> None:
+    data = _time_limit_data_with_break()
+
+    first = FamilyLinkClient._find_weekly_school_time_row(data, 2)
+    morning = FamilyLinkClient._find_weekly_school_time_row(data, 2, SCHOOL_TUESDAY_MORNING)
+
+    assert first[0] == SCHOOL_TUESDAY_AFTERNOON
+    assert morning[0] == SCHOOL_TUESDAY_MORNING and morning[3:5] == [[8, 0], [13, 0]]
+    assert FamilyLinkClient._find_weekly_school_time_row(data, 2, "CAMQAiIkbm90LXRoZXJl") is None
+
+
 class _Response:
     def __init__(self, status: int = 200) -> None:
         self.status = status
@@ -105,6 +131,74 @@ async def test_weekly_write_targets_the_school_time_slot() -> None:
         None,
         [1],
     ]
+
+
+async def test_weekly_write_names_the_slot_of_a_day_with_a_break() -> None:
+    client, session = _client(_time_limit_data_with_break())
+
+    assert await client.async_set_school_time(
+        "08:15", "13:00", day=2, account_id=ACCOUNT_ID, slot_id=SCHOOL_TUESDAY_MORNING
+    )
+
+    payload = json.loads(session.post.call_args.kwargs["data"])
+    assert payload[2][0][3] == [[SCHOOL_TUESDAY_MORNING, [8, 15], [13, 0]]]
+
+
+def _school_time_entity(schedule: list[dict], day: int, bound: str, client=None) -> FamilyLinkSchoolTimeTime:
+    coordinator = SimpleNamespace(
+        client=client,
+        data={"children_data": [{"child_id": ACCOUNT_ID, "school_time_schedule": schedule}]},
+        async_request_refresh=AsyncMock(),
+        last_update_success=True,
+    )
+    return FamilyLinkSchoolTimeTime(coordinator, ACCOUNT_ID, "Kid", day, bound)
+
+
+def _slot(day: int, start: list, end: list, slot_id: str, enabled: bool = True) -> dict:
+    return {"day": day, "day_name": "x", "enabled": enabled, "start": start, "end": end,
+            "state_flag": 2 if enabled else 1, "slot_id": slot_id}
+
+
+BREAK_SCHEDULE = [
+    _slot(2, [14, 0], [15, 0], SCHOOL_TUESDAY_AFTERNOON),
+    _slot(2, [8, 0], [13, 0], SCHOOL_TUESDAY_MORNING),
+    _slot(6, [8, 0], [15, 0], "CAMQBg", enabled=False),
+]
+
+
+def test_entities_cover_the_whole_school_day_around_a_break() -> None:
+    """Issue #190: the first row met gave Tuesday 14:00-15:00 and Monday 08:00-13:00."""
+    start = _school_time_entity(BREAK_SCHEDULE, 2, "start")
+    end = _school_time_entity(BREAK_SCHEDULE, 2, "end")
+
+    assert start.native_value == time(8, 0)
+    assert end.native_value == time(15, 0)
+    assert start.extra_state_attributes["windows"] == ["08:00-13:00", "14:00-15:00"]
+    assert start.available
+
+
+def test_a_day_whose_slots_are_disabled_reads_unknown() -> None:
+    entity = _school_time_entity(BREAK_SCHEDULE, 6, "start")
+
+    assert entity.available
+    assert entity.native_value is None
+    assert entity.extra_state_attributes["enabled"] is False
+    assert entity.extra_state_attributes["windows"] == []
+
+
+def test_a_day_without_any_slot_is_unavailable() -> None:
+    assert not _school_time_entity(BREAK_SCHEDULE, 3, "start").available
+
+
+async def test_setting_the_bounds_keeps_the_break() -> None:
+    client = SimpleNamespace(async_set_school_time=AsyncMock(return_value=True))
+
+    await _school_time_entity(BREAK_SCHEDULE, 2, "start", client).async_set_value(time(8, 30))
+    await _school_time_entity(BREAK_SCHEDULE, 2, "end", client).async_set_value(time(15, 30))
+
+    first, second = client.async_set_school_time.await_args_list
+    assert first.args[:2] == ("08:30", "13:00") and first.kwargs["slot_id"] == SCHOOL_TUESDAY_MORNING
+    assert second.args[:2] == ("14:00", "15:30") and second.kwargs["slot_id"] == SCHOOL_TUESDAY_AFTERNOON
 
 
 async def test_weekly_write_fails_without_a_slot_for_the_day() -> None:

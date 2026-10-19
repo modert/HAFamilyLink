@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **School time with a break reads and writes correctly** (#190) - Google stores a school day with a break as two slots on the same day, in no fixed order. The `time.<child>_<weekday>_school_time_start|end` entities kept the first row they met, so a day could show 14:00-15:00 while the next showed 08:00-13:00, and a day without school time (slots disabled) still showed hours. The start is now the earliest slot's, the end the latest slot's, the slots are listed in a `windows` attribute (`08:00-13:00, 14:00-15:00`), and a day whose slots are all disabled reads unknown. Setting the start changes the first slot and setting the end the last one, so the break survives.
+
+---
+
 ## [2.2.7] - 2026-10-19
 
 Four fixes: an empty members answer keeps the children, a child's daily limit skips its Google TV (contributed by @theSiegs, #192), the service guard only takes Family Link entities, and a weekly quota needs no device.
