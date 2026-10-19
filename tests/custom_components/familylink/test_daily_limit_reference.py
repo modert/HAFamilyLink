@@ -77,12 +77,23 @@ async def test_number_declares_the_quota_before_writing_it() -> None:
 
 async def test_number_puts_the_previous_reference_back_when_google_refuses() -> None:
     calls: list = []
-    number = _number(calls, _today(), today_ok=False)
+    number = _number(calls, _today(), weekly_ok=False)
 
     await number.async_set_native_value(400)
 
     assert calls[0] == ("record", 400, _today())
     assert calls[-1] == ("restore", _today(), 300)
+
+
+async def test_number_keeps_the_new_reference_when_the_write_was_taken_in_part() -> None:
+    """Same rule as the service: the reference goes back only when nothing was taken."""
+    calls: list = []
+    number = _number(calls, _today(), today_ok=False)
+
+    await number.async_set_native_value(400)
+
+    assert calls[1] == ("weekly", _today(), 400)
+    assert not [c for c in calls if c[0] == "restore"]
 
 
 async def test_number_of_another_weekday_writes_the_weekly_quota_only() -> None:
@@ -127,3 +138,21 @@ async def test_service_restores_the_reference_only_when_nothing_was_taken(hass, 
 
     assert calls[0] == ("record", 400, _today())
     assert calls[-1] == ("restore", _today(), 300)
+
+
+async def test_service_writes_another_weekday_for_a_child_without_time_limit_devices(hass, services) -> None:
+    """A weekly row needs no device: a child with only a Google TV gets it written."""
+    calls: list = []
+    _tracking(services, calls)
+    services.data = {
+        "children_data": [
+            {"child_id": CHILD_ID, "devices": [{"id": "device-tv", "capabilities": ["capabilityAppActivity"]}]}
+        ]
+    }
+    day = 1 if _today() != 1 else 2
+
+    await hass.services.async_call(
+        DOMAIN, "set_daily_limit", {"child_id": CHILD_ID, "daily_minutes": 240, "day": day}, blocking=True
+    )
+
+    assert calls == [("record", 240, day), ("weekly", day, 240)]
