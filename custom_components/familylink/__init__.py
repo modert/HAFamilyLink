@@ -786,6 +786,12 @@ async def async_setup_services(hass: HomeAssistant, coordinator: FamilyLinkDataU
 			device_id = device_id or extracted_device_id
 			child_id = child_id or extracted_child_id
 
+		day = call.data.get("day")
+		today = dt_util.now().isoweekday()
+		# Today's quota is a per-device override; another weekday is a weekly
+		# row of the child and needs no device at all
+		posts_override = day is None or day == today
+
 		# A child_id on its own targets every device of that child (issue
 		# #148): the daily limit is a per-device override on Google's side,
 		# so the call is fanned out to each known device of the child that
@@ -794,7 +800,7 @@ async def async_setup_services(hass: HomeAssistant, coordinator: FamilyLinkDataU
 			device_ids = [device_id]
 		elif child_id:
 			device_ids = time_limit_device_ids(coordinator.data, child_id)
-			if not device_ids:
+			if not device_ids and posts_override:
 				raise ValueError(
 					f"No device of child_id {child_id} takes a daily limit. Check the "
 					"child_id or select a device entity instead."
@@ -807,13 +813,11 @@ async def async_setup_services(hass: HomeAssistant, coordinator: FamilyLinkDataU
 
 		_LOGGER.info(
 			f"Service called: set_daily_limit ({daily_minutes} minutes) for "
-			f"{len(device_ids)} device(s): {', '.join(device_ids)}"
+			f"child {child_id}, {len(device_ids)} device(s): {', '.join(device_ids)}"
 		)
 
 		try:
 			results = {}
-			day = call.data.get("day")
-			today = dt_util.now().isoweekday()
 			# Declared to strict mode BEFORE the writes: the client verifies
 			# each override for several seconds, and a refresh in between must
 			# not find the old reference and put the old quota back
@@ -826,7 +830,7 @@ async def async_setup_services(hass: HomeAssistant, coordinator: FamilyLinkDataU
 				results["weekly"] = await coordinator.client.async_set_weekly_daily_limit(
 					day, daily_minutes, child_id
 				)
-			if day is None or day == today:
+			if posts_override:
 				if today not in recorded:
 					recorded[today] = coordinator.record_daily_limit_minutes(child_id, daily_minutes, today)
 				for target_device_id in device_ids:
